@@ -1,0 +1,116 @@
+# workflow to build and release the u8g2 MicroPython firmware
+# builds with the Dockerfile in sys/micropython/tools/docker of koendv/u8g2,
+# modeled on arm_can_tool's build.yml
+# release: one asset per firmware file, so the download count is per board
+
+on:
+  workflow_dispatch:
+    inputs:
+      u8g2_ref:
+        description: 'koendv/u8g2 branch, tag or commit'
+        type: string
+        default: 'clut'
+      boards:
+        description: 'Boards to build, space separated (optional, defaults to all boards)'
+        type: string
+        default: ''
+      release:
+        description: 'Publish a GitHub release from this build'
+        type: boolean
+        default: false
+      release_name:
+        description: 'Release title/tag, required for a release'
+        type: string
+        default: ''
+      notes:
+        description: 'Extra line for the release notes (optional)'
+        type: string
+        default: ''
+
+name: firmware
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: check inputs
+        if: ${{ inputs.release && inputs.release_name == '' }}
+        run: |
+          echo "::error::a release needs a release_name"
+          exit 1
+
+      - name: checkout u8g2 sources
+        uses: actions/checkout@v7
+        with:
+          repository: koendv/u8g2
+          ref: ${{ inputs.u8g2_ref }}
+          path: u8g2
+
+      - name: docker build
+        env:
+          BOARDS: ${{ inputs.boards }}
+        run: |
+          docker build --target build \
+            --build-arg U8G2_COMMIT=$(git -C u8g2 rev-parse HEAD) \
+            --build-arg BOARDS="$BOARDS" \
+            -t u8g2-micropython \
+            -f u8g2/sys/micropython/tools/docker/Dockerfile u8g2
+
+      - name: extract firmware
+        run: |
+          id=$(docker create u8g2-micropython)
+          docker cp "$id":/output ~/u8g2_firmware
+          docker rm "$id"
+          ls -l ~/u8g2_firmware
+
+      - name: upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: u8g2_firmware
+          path: ~/u8g2_firmware
+          retention-days: 7
+
+  release:
+    name: release firmware
+    runs-on: ubuntu-24.04
+    needs: build
+    if: ${{ inputs.release }}
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: download firmware
+        uses: actions/download-artifact@v8
+        with:
+          name: u8g2_firmware
+          path: artifacts
+
+      # release-notes.md is the release body, not an asset
+      - name: release notes
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          mv artifacts/release-notes.md notes.md
+          if [ -n "$NOTES" ]; then printf '\n%s\n' "$NOTES" >> notes.md; fi
+          cat notes.md
+
+      - name: release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "artifacts/*"
+          bodyFile: notes.md
+          tag: ${{ inputs.release_name }}
+          name: ${{ inputs.release_name }}
+          commit: ${{ github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+# not truncated
