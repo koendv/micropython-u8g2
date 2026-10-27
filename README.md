@@ -88,6 +88,7 @@ Verification: graphics appear on the display. ctrl-c to stop. Other demos:
 | `demo_clock.run()` | analog clock |
 | `demo_mui.run_keys()` | arrow keys or wasd, space, enter, q |
 | `demo_mui.run_touch()` | tap the edges and the center of the screen |
+| `demo_mui.run_gestures()` | swipe, click, long press |
 | `demo_settings.run_keys()` | a settings menu |
 | `demo_touch.run()` | a dot following your finger |
 
